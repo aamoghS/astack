@@ -72,7 +72,7 @@ func (d *Dispatcher) runBench() int {
 		Out:      io.Discard,
 		Err:      io.Discard,
 		Platform: plat,
-		Loader:   testLoaderForBench(embeddedAgents),
+		Loader:   testLoaderForBench(d.Loader.Embed),
 		Resolver: BinaryResolver{Platform: plat, Looker: staticLooker{path: map[string]string{"claude": stub, "gemini": stub}, files: map[string]bool{}}},
 		Runner:   NewProcessRunner(plat),
 		Prompts:  NewPromptStore(),

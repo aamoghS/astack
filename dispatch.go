@@ -183,13 +183,13 @@ type Dispatcher struct {
 	Timeout  time.Duration
 }
 
-func NewDispatcher() *Dispatcher {
+func NewDispatcher(agentsJSON []byte) *Dispatcher {
 	p := HostPlatform()
 	return &Dispatcher{
 		Out:      os.Stdout,
 		Err:      os.Stderr,
 		Platform: p,
-		Loader:   NewConfigLoader(embeddedAgents),
+		Loader:   NewConfigLoader(agentsJSON),
 		Resolver: NewBinaryResolver(p),
 		Runner:   NewProcessRunner(p),
 		Prompts:  NewPromptStore(),

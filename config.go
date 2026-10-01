@@ -23,6 +23,8 @@ type configFile struct {
 	Roles   map[string]Role      `json:"roles"`
 }
 
+const defaultFooter = "You are the astack implementer. The current IDE or chat agent is the conductor. Follow AGENTS.md or CLAUDE.md if present. Edit files in this repo. Do not commit, push, or deploy unless the prompt says so."
+
 // ConfigLoader finds agents.json (env, cwd, binary dir) and builds the registry.
 type ConfigLoader struct {
 	Embed []byte
