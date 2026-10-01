@@ -46,13 +46,13 @@ func TestParseArgsTUI(t *testing.T) {
 
 func TestTUINeedTTY(t *testing.T) {
 	d := caseDisp(map[string]string{"claude": "/c"})
-	if code := d.runTUIHost(Flags{}, nil, &fakeHost{tty: false}); code != 1 {
+	if code := (TUI{Host: &fakeHost{tty: false}, Backend: d, Err: d.Err}).Run(TUIOptions{}, nil); code != 1 {
 		t.Fatal(code)
 	}
 }
 
 func TestTUISessionSlashAndTab(t *testing.T) {
-	s := newTUISession(Flags{Workdir: t.TempDir()}, []string{"claude installed"})
+	s := newTUISession(TUIOptions{Workdir: t.TempDir()}, []string{"claude installed"})
 	s.input = "/mode swarm"
 	quit, send, _ := s.handle(tuiKey{Name: "enter"})
 	if quit || send || s.mode != "swarm" {
@@ -95,7 +95,7 @@ func TestTUISessionSlashAndTab(t *testing.T) {
 }
 
 func TestTUIHistoryAndBackspace(t *testing.T) {
-	s := newTUISession(Flags{Workdir: t.TempDir()}, nil)
+	s := newTUISession(TUIOptions{Workdir: t.TempDir()}, nil)
 	for _, r := range []rune("ab") {
 		_, _, _ = s.handle(tuiKey{Name: "rune", Rune: r})
 	}
@@ -114,7 +114,7 @@ func TestTUIHistoryAndBackspace(t *testing.T) {
 }
 
 func TestTUIRender(t *testing.T) {
-	s := newTUISession(Flags{Workdir: "/tmp/app", Agent: "claude"}, []string{"claude installed"})
+	s := newTUISession(TUIOptions{Workdir: "/tmp/app", Agent: "claude"}, []string{"claude installed"})
 	out := s.render(80, 24)
 	for _, want := range []string{"astack", "dispatch", "claude", "idle"} {
 		if !strings.Contains(out, want) {
@@ -159,8 +159,8 @@ func TestTUIDispatchDryRun(t *testing.T) {
 		{Name: "ctrl-c"},
 	}
 	h := &fakeHost{tty: true, keys: keys, w: 80, h: 24}
-	o := Flags{Workdir: dir, DryRun: true, Agent: "claude"}
-	code := d.runTUIHost(o, []string{"claude installed"}, h)
+	o := TUIOptions{Workdir: dir, DryRun: true, Agent: "claude"}
+	code := TUI{Host: h, Backend: d, Err: d.Err}.Run(o, []string{"claude installed"})
 	if code != 0 {
 		t.Fatal(code)
 	}
@@ -200,7 +200,7 @@ func TestWorkerRows(t *testing.T) {
 }
 
 func TestTUIPanelModeAndSettings(t *testing.T) {
-	s := newTUISession(Flags{Workdir: "/w"}, nil)
+	s := newTUISession(TUIOptions{Workdir: "/w"}, nil)
 	for _, line := range []string{"/mode why", "/agents claude,codex", "/model claude=opus", "/verify go test ./..."} {
 		s.input = line
 		s.handle(tuiKey{Name: "enter"})

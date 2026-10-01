@@ -53,13 +53,28 @@ type tuiSession struct {
 	status   string
 }
 
-func newTUISession(o Flags, workers []string) *tuiSession {
+// TUIOptions is the starting state of a TUI session. An empty Mode means dispatch.
+type TUIOptions struct {
+	Workdir  string
+	Mode     string
+	Agent    string
+	Playbook string
+	N        int
+	Agents   []string
+	Timeout  time.Duration
+	DryRun   bool
+	Verify   string
+	Model    string
+	Judge    string
+}
+
+func newTUISession(o TUIOptions, workers []string) *tuiSession {
 	wd := o.Workdir
 	if wd == "" {
 		wd, _ = os.Getwd()
 	}
-	mode := o.Cmd
-	if mode == "tui" || mode == "agent" || mode == "" {
+	mode := o.Mode
+	if mode == "" {
 		mode = "dispatch"
 	}
 	agent := o.Agent
@@ -93,21 +108,6 @@ func newTUISession(o Flags, workers []string) *tuiSession {
 	s.append("astack tui  coding agent  runs claude/codex/gemini/opencode/grok if installed")
 	s.append("type a task, or /agent claude  /list  /help")
 	return s
-}
-
-func workerRows(reg *AgentRegistry, resolved map[string]string) []string {
-	if reg == nil {
-		return nil
-	}
-	out := make([]string, 0, len(reg.Order))
-	for _, id := range reg.Order {
-		st := "absent"
-		if resolved[id] != "" {
-			st = "installed"
-		}
-		out = append(out, id+" "+st)
-	}
-	return out
 }
 
 func (s *tuiSession) append(line string) {

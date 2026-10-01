@@ -31,18 +31,27 @@ func (w tuiLogWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (d *Dispatcher) runTUI(o Flags, reg *AgentRegistry, resolved map[string]string) int {
-	return d.runTUIHost(o, workerRows(reg, resolved), newOSHost(os.Stdin, os.Stdout))
+// TUIBackend runs one astack command line for the TUI, writing its log to log.
+type TUIBackend interface {
+	RunArgv(argv []string, log io.Writer) int
 }
 
-func (d *Dispatcher) runTUIHost(o Flags, workers []string, host tuiHost) int {
+// TUI is the coding-agent screen. It owns the terminal and hands each task to Backend.
+type TUI struct {
+	Host    tuiHost
+	Backend TUIBackend
+	Err     io.Writer
+}
+
+func (t TUI) Run(o TUIOptions, workers []string) int {
+	host := t.Host
 	if host == nil || !host.IsTTY() {
-		fmt.Fprintln(d.Err, "astack tui: need a terminal")
+		fmt.Fprintln(t.Err, "astack tui: need a terminal")
 		return 1
 	}
 	restore, err := host.MakeRaw()
 	if err != nil {
-		fmt.Fprintf(d.Err, "astack tui: %v\n", err)
+		fmt.Fprintf(t.Err, "astack tui: %v\n", err)
 		return 1
 	}
 	defer restore()
@@ -84,7 +93,7 @@ func (d *Dispatcher) runTUIHost(o Flags, workers []string, host tuiHost) int {
 				return 0
 			}
 			if send {
-				d.tuiSend(s, redraw)
+				t.send(s, redraw)
 			}
 			draw()
 		case <-redraw:
@@ -93,7 +102,7 @@ func (d *Dispatcher) runTUIHost(o Flags, workers []string, host tuiHost) int {
 	}
 }
 
-func (d *Dispatcher) tuiSend(s *tuiSession, redraw chan struct{}) {
+func (t TUI) send(s *tuiSession, redraw chan struct{}) {
 	prompt := s.lastPrompt()
 	if prompt == "" {
 		return
@@ -120,16 +129,8 @@ func (d *Dispatcher) tuiSend(s *tuiSession, redraw chan struct{}) {
 	lw := tuiLogWriter{s: s, ch: redraw}
 	go func() {
 		defer os.Remove(pf)
-		child := d.fork()
-		child.Out, child.Err = lw, lw
-		if pr, ok := child.Runner.(*ProcessRunner); ok {
-			cp := *pr
-			cp.Stdout, cp.Stderr = lw, lw
-			cp.Stdin = nil
-			child.Runner = &cp
-		}
 		started := time.Now()
-		code := child.Main(argv)
+		code := t.Backend.RunArgv(argv, lw)
 		ms := time.Since(started).Seconds() * 1000
 		s.append(fmt.Sprintf("astack tui exit=%d wall_ms=%.2f", code, ms))
 		if code == 0 {
