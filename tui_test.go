@@ -198,3 +198,30 @@ func TestWorkerRows(t *testing.T) {
 		t.Fatal(rows)
 	}
 }
+
+func TestTUIPanelModeAndSettings(t *testing.T) {
+	s := newTUISession(Flags{Workdir: "/w"}, nil)
+	for _, line := range []string{"/mode why", "/agents claude,codex", "/model claude=opus", "/verify go test ./..."} {
+		s.input = line
+		s.handle(tuiKey{Name: "enter"})
+	}
+	got := strings.Join(s.argv("p.txt"), " ")
+	if got != "why --agents claude,codex --workdir /w --prompt-file p.txt --agent auto --model claude=opus" {
+		t.Fatal(got)
+	}
+	for _, line := range []string{"/mode arena", "/judge auto", "/verify off"} {
+		s.input = line
+		s.handle(tuiKey{Name: "enter"})
+	}
+	got = strings.Join(s.argv("p.txt"), " ")
+	if got != "arena --agents claude,codex --judge auto --workdir /w --prompt-file p.txt --agent auto --model claude=opus" {
+		t.Fatal(got)
+	}
+	s.input = "/mode dispatch"
+	s.handle(tuiKey{Name: "enter"})
+	s.input = "/verify make test"
+	s.handle(tuiKey{Name: "enter"})
+	if got = strings.Join(s.argv("p.txt"), " "); !strings.HasSuffix(got, "--verify make test") {
+		t.Fatal(got)
+	}
+}

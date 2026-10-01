@@ -1,6 +1,7 @@
 {
   "name": "bug-fix",
   "steps": [
+    {"id": "root-cause", "kind": "why"},
     {"id": "implement", "kind": "dispatch", "agent": "auto"},
     {"id": "review", "kind": "review"}
   ]

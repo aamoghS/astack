@@ -1,6 +1,7 @@
 {
   "name": "hillclimb",
   "steps": [
+    {"id": "critique", "kind": "reflect"},
     {"id": "implement", "kind": "dispatch", "agent": "auto"},
     {"id": "review", "kind": "review"}
   ]

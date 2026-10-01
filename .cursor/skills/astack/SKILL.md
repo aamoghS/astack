@@ -37,6 +37,23 @@ If the human named an agent and it is absent, exit `2`. Stop. Do not fall back t
 
 `go run . tui --workdir .` is the coding-agent screen. It runs Claude Code (`claude`) or another PATH worker. `go run . agent --workdir . --prompt-file task.txt` is the same hop headless. Exit 3 if none are installed; then this chat edits. Do not ask for keys.
 
+## Verify, review, thinking roles, models
+
+```text
+astack --workdir <repo> --prompt-file <file> --verify "go test ./..." [--retries 2]
+astack review --workdir <repo> [--prompt-file <intent>] [--agents codex,claude]
+astack why|explore|architect|reflect --workdir <repo> --prompt-file <file> [--agents a,b]
+astack arena --agents claude,agy --workdir <repo> --prompt-file <file> --verify "<cmd>" --judge auto
+astack ... --model opus | --model claude=opus,codex=gpt-5
+```
+
+- `--verify "<cmd>"` runs the command in the workdir after the worker exits 0. On failure the output tail goes back to the worker, up to `--retries` (default 2). Still failing: exit `5`.
+- `review`, `why`, `explore`, `architect`, `reflect` are read-only panels. Every installed agent listed for the role in `agents.json` `roles` runs in parallel (fallback: first installed). A CLI with `read_args` (claude, codex) runs in place with its own read-only mode; any other CLI runs on a throwaway copy, so it cannot touch the repo. Two or more answers get merged by the `synth` role. `review` reads `git diff HEAD` plus untracked files.
+- Arena: arms that fail `--verify` lose. `--judge auto|a,b` has the judge panel read each passing arm's diff and vote (`WINNER: n`). Ties go to the smaller tree.
+- Playbooks run a panel first (`feature`/`refactoring`: architect, `bug-fix`/`perf-issue`: why, `hillclimb`: reflect), pass its answer to the implement step as notes, then run the review panel. Review is advice and never fails the playbook.
+- Models: `--model` overrides; otherwise `roles.<role>.models.<agent>` in `agents.json`; otherwise the CLI default. `model_args` says how each CLI takes a model.
+- TUI: `/mode why|review|...`, `/verify <cmd>|off`, `/model <m>|off`, `/judge auto|off`.
+
 ## Do not
 
 - Spawn Cursor `Task` for app code when an installed worker ran successfully.

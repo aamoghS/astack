@@ -1,6 +1,7 @@
 {
   "name": "perf-issue",
   "steps": [
+    {"id": "profile", "kind": "why"},
     {"id": "implement", "kind": "dispatch", "agent": "auto"},
     {"id": "review", "kind": "review"}
   ]

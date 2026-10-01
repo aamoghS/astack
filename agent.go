@@ -5,16 +5,32 @@ import (
 	"strings"
 )
 
-// Agent is one worker CLI: binaries to find and the argv template to run.
+// Agent is one worker CLI: binaries to find and the argv templates to run.
+// Args is the writer template. ReadArgs, when set, is a template the CLI
+// enforces as read-only. ModelArgs is appended when a model is chosen.
 type Agent struct {
-	ID   string
-	Bins []string
-	Args []string
+	ID        string
+	Bins      []string
+	Args      []string
+	ReadArgs  []string
+	ModelArgs []string
+}
+
+// CanReadOnly reports whether the CLI itself enforces a read-only run.
+func (a Agent) CanReadOnly() bool {
+	return len(a.ReadArgs) > 0
 }
 
 func (a Agent) Expand(vars map[string]string) []string {
-	out := make([]string, len(a.Args))
-	for i, s := range a.Args {
+	return a.expand(a.Args, vars)
+}
+
+func (a Agent) expand(tmpl []string, vars map[string]string) []string {
+	if vars["model"] != "" {
+		tmpl = append(append([]string(nil), tmpl...), a.ModelArgs...)
+	}
+	out := make([]string, len(tmpl))
+	for i, s := range tmpl {
 		for k, v := range vars {
 			s = strings.ReplaceAll(s, "{{"+k+"}}", v)
 		}
@@ -33,7 +49,16 @@ func argvBytes(args []string) int {
 
 // CommandLine fills the template and, on Windows, swaps a huge prompt for a file path.
 func (a Agent) CommandLine(vars map[string]string, plat Platform) []string {
-	args := a.Expand(vars)
+	return a.commandLine(a.Args, vars, plat)
+}
+
+// ReadCommandLine is CommandLine for read-only roles; it needs CanReadOnly.
+func (a Agent) ReadCommandLine(vars map[string]string, plat Platform) []string {
+	return a.commandLine(a.ReadArgs, vars, plat)
+}
+
+func (a Agent) commandLine(tmpl []string, vars map[string]string, plat Platform) []string {
+	args := a.expand(tmpl, vars)
 	if argvBytes(args) <= plat.MaxArgBytes() {
 		return args
 	}
@@ -42,7 +67,7 @@ func (a Agent) CommandLine(vars map[string]string, plat Platform) []string {
 		next[k] = v
 	}
 	next["prompt"] = "Read the UTF-8 file at " + vars["prompt_file"] + " and follow it as your complete task. Do not commit that file."
-	return a.Expand(next)
+	return a.expand(tmpl, next)
 }
 
 // AgentRegistry owns the configured workers and the auto-pick order.
@@ -50,6 +75,7 @@ type AgentRegistry struct {
 	Default string
 	Order   []string
 	Footer  string
+	Roles   map[string]Role
 	byID    map[string]Agent
 }
 

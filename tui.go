@@ -17,10 +17,11 @@ const (
 	tuiMinW     = 40
 	tuiMinH     = 12
 	tuiHelpText = `/help  /list  /clear  /quit
-/mode dispatch|playbook|swarm|arena
+/mode dispatch|playbook|swarm|arena|review|why|architect|explore|reflect
 /agent auto|claude|codex|gemini|agy|opencode|grok
 /playbook <name>  /n 1-8  /agents a,b  /timeout 5m
 /workdir <dir>  /dry-run
+/verify <cmd>|off  /model <m>|agent=m,..|off  /judge auto|a,b|off
 tab cycles mode  enter runs the worker  ctrl-c quit
 astack is the coding agent. it calls claude/codex/gemini/opencode/grok on PATH.`
 )
@@ -40,6 +41,9 @@ type tuiSession struct {
 	agents   string
 	timeout  time.Duration
 	dryRun   bool
+	verify   string
+	model    string
+	judge    string
 	input    string
 	history  []string
 	histIdx  int
@@ -78,6 +82,9 @@ func newTUISession(o Flags, workers []string) *tuiSession {
 		n:        n,
 		agents:   strings.Join(o.Agents, ","),
 		timeout:  o.Timeout,
+		verify:   o.Verify,
+		model:    o.Model,
+		judge:    o.Judge,
 		dryRun:   o.DryRun,
 		workers:  workers,
 		status:   "ready",
@@ -239,6 +246,11 @@ func (s *tuiSession) applySlash(line string) (quit, send bool) {
 			s.mode = arg
 			s.status = "mode " + s.mode
 		default:
+			if isPanelRole(arg) {
+				s.mode = arg
+				s.status = "mode " + s.mode + " (read-only panel)"
+				break
+			}
 			s.appendLocked("unknown mode " + arg)
 		}
 	case "/agent":
@@ -266,8 +278,10 @@ func (s *tuiSession) applySlash(line string) (quit, send bool) {
 		s.status = fmt.Sprintf("n=%d", n)
 	case "/agents":
 		s.agents = strings.ReplaceAll(arg, " ", "")
-		s.mode = "arena"
-		s.status = "arena " + s.agents
+		if !isPanelRole(s.mode) {
+			s.mode = "arena"
+		}
+		s.status = s.mode + " " + s.agents
 	case "/timeout":
 		d, err := time.ParseDuration(arg)
 		if err != nil {
@@ -293,6 +307,21 @@ func (s *tuiSession) applySlash(line string) (quit, send bool) {
 		}
 		s.workdir = abs
 		s.status = "workdir " + abs
+	case "/verify":
+		s.verify = tuiSetting(arg, s.verify)
+		s.status = "verify " + orNone(s.verify)
+	case "/model":
+		if arg != "" && arg != "off" {
+			if _, err := ParseModelChoice(arg); err != nil {
+				s.appendLocked(err.Error())
+				break
+			}
+		}
+		s.model = tuiSetting(arg, s.model)
+		s.status = "model " + orNone(s.model)
+	case "/judge":
+		s.judge = tuiSetting(arg, s.judge)
+		s.status = "judge " + orNone(s.judge)
 	case "/dry-run":
 		s.dryRun = !s.dryRun
 		s.status = fmt.Sprintf("dry-run=%v", s.dryRun)
@@ -340,6 +369,16 @@ func (s *tuiSession) argv(promptFile string) []string {
 		if s.agents != "" {
 			args = append(args, "--agents", s.agents)
 		}
+		if s.judge != "" {
+			args = append(args, "--judge", s.judge)
+		}
+	default:
+		if isPanelRole(s.mode) {
+			args = []string{s.mode}
+			if s.agents != "" {
+				args = append(args, "--agents", s.agents)
+			}
+		}
 	}
 	args = append(args, "--workdir", s.workdir, "--prompt-file", promptFile, "--agent", s.agent)
 	if s.dryRun {
@@ -348,7 +387,31 @@ func (s *tuiSession) argv(promptFile string) []string {
 	if s.timeout > 0 {
 		args = append(args, "--timeout", s.timeout.String())
 	}
+	if s.model != "" {
+		args = append(args, "--model", s.model)
+	}
+	if s.verify != "" && !isPanelRole(s.mode) {
+		args = append(args, "--verify", s.verify)
+	}
 	return args
+}
+
+// tuiSetting applies a /verify-style command: no arg keeps the value, "off" clears it.
+func tuiSetting(arg, cur string) string {
+	switch arg {
+	case "":
+		return cur
+	case "off":
+		return ""
+	}
+	return arg
+}
+
+func orNone(v string) string {
+	if v == "" {
+		return "off"
+	}
+	return v
 }
 
 func (s *tuiSession) setRunning(v bool, status string) {

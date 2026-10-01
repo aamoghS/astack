@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -47,9 +48,7 @@ func ParsePlaybook(b []byte) (Playbook, error) {
 		if s.ID == "" {
 			return p, fmt.Errorf("playbook step %d missing id", i)
 		}
-		switch s.Kind {
-		case "dispatch", "review":
-		default:
+		if s.Kind != "dispatch" && !isPanelRole(s.Kind) {
 			return p, fmt.Errorf("playbook step %s has unknown kind %s", s.ID, s.Kind)
 		}
 	}
@@ -93,51 +92,169 @@ func (d *Dispatcher) runPlaybook(o Flags, reg *AgentRegistry, resolved map[strin
 		fmt.Fprintln(d.Err, err)
 		return 1
 	}
-	type stepOut struct {
-		ID     string `json:"id"`
-		Kind   string `json:"kind"`
-		Agent  string `json:"agent,omitempty"`
-		Action string `json:"action"`
-	}
-	out := make([]stepOut, 0, len(pb.Steps))
+	run := &playbookRun{d: d, o: o, reg: reg, resolved: resolved, name: pb.Name}
+	defer run.cleanup()
 	for _, s := range pb.Steps {
-		switch s.Kind {
-		case "review":
-			if !o.DryRun {
-				if stat := reviewWorkdir(o.Workdir); stat != "" && !d.JSON {
-					fmt.Fprintln(d.Out, stat)
-				}
-			}
-			out = append(out, stepOut{ID: s.ID, Kind: s.Kind, Action: "conductor-git-diff"})
-			if !d.JSON {
-				fmt.Fprintf(d.Out, "astack playbook %s/%s: review git diff locally; not a Cursor Task\n", pb.Name, s.ID)
-			}
-		case "dispatch":
-			agent := s.Agent
-			if agent == "" {
-				agent = "auto"
-			}
-			pick := reg.Pick(agent, resolved)
-			if pick.Code != 0 {
-				fmt.Fprintln(d.Err, pick.Err)
-				return pick.Code
-			}
-			out = append(out, stepOut{ID: s.ID, Kind: s.Kind, Agent: pick.Agent.ID, Action: "dispatch"})
-			child := o
-			child.Cmd = ""
-			child.Agent = pick.Agent.ID
-			child.Playbook = ""
-			child.JSON = false
-			code := d.fork().Main(flattenDispatch(child))
-			if code != 0 {
-				return code
-			}
+		if code := run.step(s); code != 0 {
+			return code
 		}
 	}
 	if d.JSON {
-		_ = json.NewEncoder(d.Out).Encode(map[string]any{"playbook": pb.Name, "steps": out, "task": false})
+		_ = json.NewEncoder(d.Out).Encode(map[string]any{"playbook": pb.Name, "steps": run.out, "task": false})
 	}
 	return 0
+}
+
+type playbookStepOut struct {
+	ID     string `json:"id"`
+	Kind   string `json:"kind"`
+	Agent  string `json:"agent,omitempty"`
+	Action string `json:"action"`
+}
+
+// playbookRun carries state between steps: notes from panel steps are
+// prepended to the task the next dispatch step sends to the worker.
+type playbookRun struct {
+	d        *Dispatcher
+	o        Flags
+	reg      *AgentRegistry
+	resolved map[string]string
+	name     string
+	notes    []string
+	temps    []string
+	out      []playbookStepOut
+}
+
+func (r *playbookRun) step(s PlaybookStep) int {
+	switch {
+	case s.Kind == "dispatch":
+		return r.dispatch(s)
+	case s.Kind == RoleReview:
+		return r.review(s)
+	default:
+		return r.consult(s)
+	}
+}
+
+func (r *playbookRun) dispatch(s PlaybookStep) int {
+	pick := r.reg.Pick(orAuto(s.Agent), r.resolved)
+	if pick.Code != 0 {
+		fmt.Fprintln(r.d.Err, pick.Err)
+		return pick.Code
+	}
+	r.out = append(r.out, playbookStepOut{ID: s.ID, Kind: s.Kind, Agent: pick.Agent.ID, Action: "dispatch"})
+	child := r.o
+	child.Cmd = ""
+	child.Agent = pick.Agent.ID
+	child.Playbook = ""
+	child.JSON = false
+	if pf, ok := r.promptWithNotes(); ok {
+		child.PromptFile = pf
+	}
+	return r.d.fork().Main(flattenDispatch(child))
+}
+
+// review runs the review panel on the uncommitted change. It is advice: a
+// reviewer failing or finding problems never fails the playbook.
+func (r *playbookRun) review(s PlaybookStep) int {
+	r.out = append(r.out, playbookStepOut{ID: s.ID, Kind: s.Kind, Action: "review-panel"})
+	if !r.d.JSON {
+		fmt.Fprintf(r.d.Out, "astack playbook %s/%s: review\n", r.name, s.ID)
+	}
+	if r.o.DryRun || r.o.Workdir == "" {
+		return 0
+	}
+	if stat := reviewWorkdir(r.o.Workdir); stat != "" && !r.d.JSON {
+		fmt.Fprintln(r.d.Out, stat)
+	}
+	change := GitChange(r.o.Workdir)
+	if change == "" {
+		return 0
+	}
+	members, pick := r.reg.Members(RoleReview, agentList(s.Agent), r.resolved)
+	if pick.Code != 0 {
+		return 0
+	}
+	models, _ := ParseModelChoice(r.o.Model)
+	out := r.d.consult(RoleReview, members, reviewTask(r.prompt(), change), r.o.Workdir, r.reg, r.resolved, models)
+	if !r.d.JSON {
+		out.Print(r.d.Out)
+	}
+	return 0
+}
+
+// consult runs an analysis panel (why, architect, ...) and keeps its answer
+// as notes for the next dispatch step.
+func (r *playbookRun) consult(s PlaybookStep) int {
+	members, pick := r.reg.Members(s.Kind, agentList(s.Agent), r.resolved)
+	if pick.Code != 0 {
+		fmt.Fprintln(r.d.Err, pick.Err)
+		return pick.Code
+	}
+	r.out = append(r.out, playbookStepOut{ID: s.ID, Kind: s.Kind, Agent: strings.Join(agentIDs(members), ","), Action: "panel"})
+	if !r.d.JSON {
+		fmt.Fprintf(r.d.Out, "astack playbook %s/%s: %s panel %v\n", r.name, s.ID, s.Kind, agentIDs(members))
+	}
+	if r.o.DryRun {
+		return 0
+	}
+	models, _ := ParseModelChoice(r.o.Model)
+	out := r.d.consult(s.Kind, members, roleTask(s.Kind, r.prompt(), r.o.Workdir), r.o.Workdir, r.reg, r.resolved, models)
+	if !r.d.JSON {
+		out.Print(r.d.Out)
+	}
+	if !out.OK() {
+		fmt.Fprintf(r.d.Err, "astack playbook %s/%s: no %s answer; continuing without it\n", r.name, s.ID, s.Kind)
+		return 0
+	}
+	r.notes = append(r.notes, "## "+s.Kind+" notes\n"+out.Summary())
+	return 0
+}
+
+func (r *playbookRun) prompt() string {
+	b, _ := os.ReadFile(r.o.PromptFile)
+	return string(b)
+}
+
+// promptWithNotes writes the task plus panel notes to a temp file outside
+// the workdir. ok is false when there are no notes.
+func (r *playbookRun) promptWithNotes() (string, bool) {
+	if len(r.notes) == 0 {
+		return "", false
+	}
+	f, err := os.CreateTemp("", "astack-playbook-*.txt")
+	if err != nil {
+		return "", false
+	}
+	body := strings.TrimSpace(r.prompt()) + "\n\nNotes from earlier read-only steps (advice, not orders; verify before relying on them):\n\n" + strings.Join(r.notes, "\n\n")
+	_, err = f.WriteString(body)
+	f.Close()
+	if err != nil {
+		os.Remove(f.Name())
+		return "", false
+	}
+	r.temps = append(r.temps, f.Name())
+	return f.Name(), true
+}
+
+func (r *playbookRun) cleanup() {
+	for _, p := range r.temps {
+		os.Remove(p)
+	}
+}
+
+// agentList reads a step's "agent" field: empty or "auto" means the role default.
+func agentList(v string) []string {
+	if v == "" || v == "auto" {
+		return nil
+	}
+	var out []string
+	for _, id := range strings.Split(v, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func flattenDispatch(o Flags) []string {
@@ -147,6 +264,12 @@ func flattenDispatch(o Flags) []string {
 	}
 	if o.Timeout > 0 {
 		args = append(args, "--timeout", o.Timeout.String())
+	}
+	if o.Model != "" {
+		args = append(args, "--model", o.Model)
+	}
+	if o.Verify != "" {
+		args = append(args, "--verify", o.Verify, "--retries", strconv.Itoa(o.Retries))
 	}
 	return args
 }

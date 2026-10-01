@@ -8,12 +8,19 @@ import (
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // Runner executes a worker process.
 type Runner interface {
 	Run(bin string, args []string, cwd string) int
+}
+
+// OutputRunner is a Runner that can hand a worker's stdout to the caller
+// (panels read the reply instead of streaming it). Stdin is closed.
+type OutputRunner interface {
+	RunOutput(bin string, args []string, cwd string, stdout, stderr io.Writer) int
 }
 
 // ProcessRunner builds an *exec.Cmd through the Platform (cmd.exe shims on Windows).
@@ -71,6 +78,13 @@ func (r *ProcessRunner) Run(bin string, args []string, cwd string) int {
 	}
 }
 
+func (r *ProcessRunner) RunOutput(bin string, args []string, cwd string, stdout, stderr io.Writer) int {
+	cp := *r
+	cp.Stdin = strings.NewReader("")
+	cp.Stdout, cp.Stderr = stdout, stderr
+	return cp.Run(bin, args, cwd)
+}
+
 func killTree(cmd *exec.Cmd) {
 	if cmd.Process == nil {
 		return
@@ -98,8 +112,10 @@ func exitFromErr(err error, stderr io.Writer) int {
 }
 
 // PromptStore writes the task file inside the workdir so Codex's sandbox can read it.
+// Tag keeps parallel panel members in one workdir from sharing a file.
 type PromptStore struct {
 	Pid int
+	Tag string
 }
 
 func NewPromptStore() PromptStore {
@@ -107,7 +123,11 @@ func NewPromptStore() PromptStore {
 }
 
 func (s PromptStore) Write(workdir, body string) (string, error) {
-	name := ".astack-prompt." + strconv.Itoa(s.Pid) + ".txt"
+	name := ".astack-prompt." + strconv.Itoa(s.Pid)
+	if s.Tag != "" {
+		name += "." + s.Tag
+	}
+	name += ".txt"
 	path := filepath.Join(workdir, name)
 	return path, os.WriteFile(path, []byte(body), 0600)
 }

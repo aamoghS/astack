@@ -9,8 +9,10 @@ import (
 )
 
 type agentSpec struct {
-	Bin  []string `json:"bin"`
-	Args []string `json:"args"`
+	Bin       []string `json:"bin"`
+	Args      []string `json:"args"`
+	ReadArgs  []string `json:"read_args"`
+	ModelArgs []string `json:"model_args"`
 }
 
 type configFile struct {
@@ -18,6 +20,7 @@ type configFile struct {
 	Order   []string             `json:"order"`
 	Footer  string               `json:"footer"`
 	Agents  map[string]agentSpec `json:"agents"`
+	Roles   map[string]Role      `json:"roles"`
 }
 
 // ConfigLoader finds agents.json (env, cwd, binary dir) and builds the registry.
@@ -96,6 +99,7 @@ func ParseRegistry(b []byte) (*AgentRegistry, error) {
 		Default: file.Default,
 		Order:   file.Order,
 		Footer:  file.Footer,
+		Roles:   file.Roles,
 		byID:    map[string]Agent{},
 	}
 	if reg.Footer == "" {
@@ -108,11 +112,18 @@ func ParseRegistry(b []byte) (*AgentRegistry, error) {
 		if len(spec.Args) == 0 {
 			return nil, fmt.Errorf("agent %s has no args", id)
 		}
-		reg.byID[id] = Agent{ID: id, Bins: spec.Bin, Args: spec.Args}
+		reg.byID[id] = Agent{ID: id, Bins: spec.Bin, Args: spec.Args, ReadArgs: spec.ReadArgs, ModelArgs: spec.ModelArgs}
 	}
 	for _, id := range reg.Order {
 		if _, ok := reg.byID[id]; !ok {
 			return nil, fmt.Errorf("order lists unknown agent %s", id)
+		}
+	}
+	for name, role := range reg.Roles {
+		for _, id := range role.Agents {
+			if _, ok := reg.byID[id]; !ok {
+				return nil, fmt.Errorf("role %s lists unknown agent %s", name, id)
+			}
 		}
 	}
 	return reg, nil

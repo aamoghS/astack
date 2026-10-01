@@ -25,19 +25,31 @@ type Flags struct {
 	Playbook   string
 	Workdir    string
 	PromptFile string
+	Verify     string
+	Retries    int
+	Model      string
+	Judge      string
 }
 
 func usageText() string {
-	return "usage: astack [tui|agent|playbook|swarm|arena] --workdir <repo> --prompt-file <file> [--agent auto] [--n 3] [--agents claude,codex] [--playbook file] [--list] [--bench] [--json] [--dry-run] [--timeout 0s]"
+	return "usage: astack [tui|agent|playbook|swarm|arena|" + strings.Join(panelRoleNames(), "|") + "] --workdir <repo> --prompt-file <file> " +
+		"[--agent auto] [--model m|agent=m,...] [--verify \"<cmd>\"] [--retries 2] [--judge auto|a,b] [--n 3] [--agents claude,codex] " +
+		"[--playbook file] [--list] [--bench] [--json] [--dry-run] [--timeout 0s]"
 }
 
 func parseArgs(argv []string) (Flags, error) {
 	var o Flags
+	retriesSet := false
 	if len(argv) > 0 && !strings.HasPrefix(argv[0], "-") {
 		switch argv[0] {
 		case "playbook", "swarm", "arena", "tui", "agent":
 			o.Cmd = argv[0]
 			argv = argv[1:]
+		default:
+			if isPanelRole(argv[0]) {
+				o.Cmd = argv[0]
+				argv = argv[1:]
+			}
 		}
 	}
 	for i := 0; i < len(argv); i++ {
@@ -115,9 +127,44 @@ func parseArgs(argv []string) (Flags, error) {
 				return o, err
 			}
 			o.PromptFile = v
+		case "--verify":
+			v, err := need()
+			if err != nil {
+				return o, err
+			}
+			o.Verify = v
+		case "--retries":
+			v, err := need()
+			if err != nil {
+				return o, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 0 || n > 10 {
+				return o, fmt.Errorf("bad --retries %s (want 0-10)", v)
+			}
+			o.Retries = n
+			retriesSet = true
+		case "--model":
+			v, err := need()
+			if err != nil {
+				return o, err
+			}
+			if _, err := ParseModelChoice(v); err != nil {
+				return o, err
+			}
+			o.Model = v
+		case "--judge":
+			v, err := need()
+			if err != nil {
+				return o, err
+			}
+			o.Judge = v
 		default:
 			return o, fmt.Errorf("unknown flag %s", a)
 		}
+	}
+	if o.Verify != "" && !retriesSet {
+		o.Retries = 2
 	}
 	return o, nil
 }
@@ -131,6 +178,7 @@ type Dispatcher struct {
 	Resolver BinaryResolver
 	Runner   Runner
 	Prompts  PromptStore
+	Verifier Verifier
 	JSON     bool
 	Timeout  time.Duration
 }
@@ -145,6 +193,7 @@ func NewDispatcher() *Dispatcher {
 		Resolver: NewBinaryResolver(p),
 		Runner:   NewProcessRunner(p),
 		Prompts:  NewPromptStore(),
+		Verifier: NewShellVerifier(),
 	}
 }
 
@@ -199,6 +248,9 @@ func (d *Dispatcher) Main(argv []string) int {
 	case "arena":
 		return d.runArena(o, reg, resolved)
 	}
+	if isPanelRole(o.Cmd) {
+		return d.runPanelCmd(o, reg, resolved)
+	}
 
 	if o.Workdir == "" || o.PromptFile == "" {
 		fmt.Fprintln(d.Err, usageText())
@@ -247,33 +299,69 @@ func (d *Dispatcher) Main(argv []string) int {
 		defer lock.Release()
 	}
 
-	task := strings.TrimRight(string(promptBytes), "\r\n") + "\n\n" + reg.Footer
-	promptPath, err := d.Prompts.Write(absWork, task)
-	if err != nil {
-		fmt.Fprintf(d.Err, "astack: cannot write prompt file: %v\n", err)
-		return 1
-	}
-	defer d.Prompts.Remove(promptPath)
-
-	args := pick.Agent.CommandLine(map[string]string{
-		"prompt":      task,
-		"footer":      reg.Footer,
-		"workdir":     absWork,
-		"prompt_file": promptPath,
-	}, d.Platform)
+	models, _ := ParseModelChoice(o.Model)
+	model := reg.Model(RoleImplement, pick.Agent.ID, models)
 	bin := resolved[pick.Agent.ID]
-
+	task := strings.TrimRight(string(promptBytes), "\r\n") + "\n\n" + reg.Footer
+	attempts := 1
+	if o.Verify != "" {
+		attempts += o.Retries
+	}
+	code := 0
+	for attempt := 1; attempt <= attempts; attempt++ {
+		var stop bool
+		code, stop = d.attempt(pick.Agent, bin, model, task, reg.Footer, absWork, o.DryRun)
+		if stop || code != 0 || o.Verify == "" {
+			break
+		}
+		res := d.verify(o.Verify, absWork)
+		if res.Passed() {
+			fmt.Fprintf(d.Err, "astack verify: pass attempt=%d\n", attempt)
+			break
+		}
+		code = exitVerify
+		fmt.Fprintf(d.Err, "astack verify: fail exit=%d attempt=%d/%d\n", res.Code, attempt, attempts)
+		task = retryTask(task, o.Verify, res, attempt)
+	}
 	if o.DryRun {
-		return d.printDryRun(pick.Agent.ID, bin, args)
+		return code
 	}
-
-	if !d.JSON {
-		fmt.Fprintf(d.Out, "astack worker: %s\n", pick.Agent.ID)
-	}
-	code := d.Runner.Run(bin, args, absWork)
 	wall := time.Since(started).Seconds() * 1000
 	d.printResult(pick.Agent.ID, bin, wall, code)
 	return code
+}
+
+// attempt runs the worker once. stop is true for a dry run (nothing to verify).
+func (d *Dispatcher) attempt(a Agent, bin, model, task, footer, workdir string, dryRun bool) (code int, stop bool) {
+	promptPath, err := d.Prompts.Write(workdir, task)
+	if err != nil {
+		fmt.Fprintf(d.Err, "astack: cannot write prompt file: %v\n", err)
+		return 1, true
+	}
+	defer d.Prompts.Remove(promptPath)
+	args := a.CommandLine(map[string]string{
+		"prompt":      task,
+		"footer":      footer,
+		"workdir":     workdir,
+		"prompt_file": promptPath,
+		"model":       model,
+	}, d.Platform)
+	if dryRun {
+		return d.printDryRun(a.ID, bin, args), true
+	}
+	if !d.JSON {
+		fmt.Fprintf(d.Out, "astack worker: %s\n", a.ID)
+	}
+	return d.Runner.Run(bin, args, workdir), false
+}
+
+func (d *Dispatcher) verify(command, workdir string) VerifyResult {
+	v := d.Verifier
+	if v == nil {
+		v = NewShellVerifier()
+	}
+	fmt.Fprintf(d.Err, "astack verify: %s\n", command)
+	return v.Verify(command, workdir, d.Timeout, d.Err)
 }
 
 func (d *Dispatcher) printList(reg *AgentRegistry, resolved map[string]string) int {
