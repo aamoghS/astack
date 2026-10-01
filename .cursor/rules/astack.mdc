@@ -1,0 +1,24 @@
+---
+description: aamogh stack (astack) — optional coding CLIs; skip missing ones, no install nags
+alwaysApply: true
+---
+
+# aamogh stack (astack)
+
+The current chat is the conductor. From this repo, code writes may go to a local CLI via:
+
+```text
+go run . --workdir <app-repo> --prompt-file <prompt.txt> --agent auto
+```
+
+On macOS/Linux/Git Bash use `./run.sh`. On Windows PowerShell use `.\run.ps1`. From an app repo, that repo's wrappers default `--workdir` to itself and look for this dispatcher at `../astack` or `../ok/astack`.
+
+In Cursor: do not spawn Task for app code when a worker ran, or when exit is 3.
+
+If the dispatcher exits 3 (no worker installed), implement in this chat. Do not tell anyone to install Claude, Codex, Antigravity, or Gemini.
+
+If it exits 2 (named agent missing), stop. Do not switch to another CLI.
+
+After a worker exits 0, review `git diff` yourself.
+
+Playbook, swarm, and arena are local (`go run . playbook|swarm|arena`). Do not spawn Cursor Tasks for those.

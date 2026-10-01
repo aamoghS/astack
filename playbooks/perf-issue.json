@@ -1,0 +1,7 @@
+{
+  "name": "perf-issue",
+  "steps": [
+    {"id": "implement", "kind": "dispatch", "agent": "auto"},
+    {"id": "review", "kind": "review"}
+  ]
+}

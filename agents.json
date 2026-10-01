@@ -1,0 +1,30 @@
+{
+  "default": "auto",
+  "order": ["claude", "agy", "codex", "gemini", "opencode", "grok"],
+  "agents": {
+    "claude": {
+      "bin": ["claude"],
+      "args": ["-p", "{{prompt}}", "--output-format", "text", "--permission-mode", "bypassPermissions", "--append-system-prompt", "{{footer}}"]
+    },
+    "agy": {
+      "bin": ["agy", "antigravity"],
+      "args": ["-p", "{{prompt}}", "--output-format", "text", "--dangerously-skip-permissions", "--add-dir", "{{workdir}}"]
+    },
+    "codex": {
+      "bin": ["codex"],
+      "args": ["exec", "-C", "{{workdir}}", "-s", "workspace-write", "{{prompt}}"]
+    },
+    "gemini": {
+      "bin": ["gemini"],
+      "args": ["-p", "{{prompt}}", "--yolo", "--output-format", "text"]
+    },
+    "opencode": {
+      "bin": ["opencode"],
+      "args": ["run", "{{prompt}}"]
+    },
+    "grok": {
+      "bin": ["grok"],
+      "args": ["-p", "{{prompt}}", "--cwd", "{{workdir}}", "--output-format", "plain", "--always-approve", "--no-auto-update"]
+    }
+  }
+}

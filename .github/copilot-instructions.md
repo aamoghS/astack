@@ -1,0 +1,1 @@
+Follow AGENTS.md in this repository. astack is the optional local-CLI dispatcher on Windows, macOS, and Linux. If dispatch exits 3, edit files in this chat. Do not tell anyone to install a worker CLI.

@@ -1,0 +1,6 @@
+/astack
+/astack.exe
+/bin/
+.DS_Store
+.astack-prompt*.txt
+.astack.lock

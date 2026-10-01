@@ -1,0 +1,1 @@
+Follow AGENTS.md in this repository. Dispatch with astack / run.sh / run.ps1 on Windows, macOS, or Linux. If no worker CLI is installed, edit files in this chat. Do not tell anyone to install a worker.

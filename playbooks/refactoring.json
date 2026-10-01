@@ -1,0 +1,7 @@
+{
+  "name": "refactoring",
+  "steps": [
+    {"id": "implement", "kind": "dispatch", "agent": "auto"},
+    {"id": "review", "kind": "review"}
+  ]
+}
