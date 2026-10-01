@@ -64,3 +64,19 @@ Never `npx` or `npm i -g` a worker. Never ask for API keys.
 ## Other IDEs
 
 `AGENTS.md` is the shared conductor brief. Cursor, Copilot, Codex, Windsurf, Cline, Zed, Amp, and OpenCode read it. Claude Code reads `CLAUDE.md`. Gemini CLI reads `GEMINI.md`. Copy `AGENTS.md` (and this dispatcher) into an app repo, or keep astack as a sibling.
+
+## Code layout
+
+```text
+main.go                 embeds agents.json, runs app.Dispatcher
+internal/app            Dispatcher, Flags, and one Command type per subcommand
+                        (DispatchCommand, PanelCommand, ArenaCommand, SwarmCommand,
+                        PlaybookCommand, TUICommand, ListCommand); playbooks/*.json
+internal/agents         Agent, Registry, Role, ModelChoice, ConfigLoader, BinaryResolver
+internal/proc           ProcessRunner, PromptStore, Verifier
+internal/workspace      isolated copies, diffs, the workdir lock
+internal/platform       Windows / macOS / Linux Platform types
+internal/tui            Screen (the TUI) and per-OS terminal hosts; talks to app via tui.Backend
+```
+
+Dependencies point one way: `app` uses everything; `tui` never imports `app`.
