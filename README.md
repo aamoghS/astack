@@ -80,3 +80,51 @@ internal/tui            Screen (the TUI) and per-OS terminal hosts; talks to app
 ```
 
 Dependencies point one way: `app` uses everything; `tui` never imports `app`.
+
+## System design
+
+How a request or a run moves through the code, then the choices behind that shape. In the decision charts, a **solid** box is the route this repo takes and a **dashed** box is the alternative it turns down; the edge label is the tradeoff.
+
+### Dispatch
+
+app owns every subcommand. The prompt is a file, then an installed CLI runs, then --verify feeds a failure tail back to that same worker. The TUI calls a Backend and does not import app .
+
+```mermaid
+flowchart TD
+  classDef chosen fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+  person[Person]
+  app["internal/app"]
+  proc["proc writes the prompt file"]
+  worker["Installed CLI"]
+  verify["verify command"]
+  person --> app
+  app --> proc
+  proc --> worker
+  worker -->|"exit 0"| verify
+  verify -->|"failure tail, up to retries"| worker
+  class app,proc,worker,verify chosen
+```
+
+### Prompt, worker, read-only
+
+The prompt is a file because argv limits truncate it. --agent auto uses the first installed name and does not fetch a CLI. A read-only panel uses the CLI’s own read-only flags, or a throwaway copy when the CLI has none.
+
+```mermaid
+flowchart TD
+  classDef chosen fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+  classDef rejected fill:#f5f5f5,stroke:#9e9e9e,stroke-width:1px,stroke-dasharray:5 5,color:#616161
+  prompt{A large task}
+  prompt -->|"argv limits truncate it"| argv["Prompt on the command line"]
+  prompt -->|"file in the workdir, then delete"| file["Prompt file"]
+  agent{Which CLI runs}
+  agent -->|"already on the machine, else exit"| local["Installed worker"]
+  agent -->|"download one or ask for a key"| fetch["Fetch a worker"]
+  look{A read-only panel}
+  look -->|"the CLI has read-only flags"| flags["In place"]
+  look -->|"no read-only mode"| copy["Throwaway copy"]
+  look -->|"a prompt that says do not write"| hope["Same repo, no flag"]
+  class file,local,flags,copy chosen
+  class argv,fetch,hope rejected
+```
+
+Longer write-up: [aamogh.vercel.app/projects/astack](https://aamogh.vercel.app/projects/astack.html)
